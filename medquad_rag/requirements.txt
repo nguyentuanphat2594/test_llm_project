@@ -1,0 +1,14 @@
+torch
+transformers
+trl
+peft
+accelerate
+bitsandbytes
+torchao
+datasets
+
+# evaluate.py (RAGAs)
+ragas
+langchain
+langchain-community
+sentence-transformers
