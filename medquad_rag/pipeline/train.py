@@ -147,14 +147,15 @@ def main():
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
         learning_rate=2e-4,
-        logging_steps=10,
+        logging_steps=1,          # log mỗi step
         save_strategy="epoch",
         eval_strategy="epoch" if val_dataset is not None else "no",
-        fp16=False,  # fp16 chỉ dùng được khi có GPU
+        fp16=False,
         use_cpu=not USE_GPU,
         report_to="none",
         dataset_text_field="text",
         max_length=1024,
+        disable_tqdm=False,       # bật progress bar
     )
 
     trainer = SFTTrainer(
@@ -162,6 +163,7 @@ def main():
         args=training_args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
+        callbacks=[ProgressCallback()],   # callback hiển thị tiến độ
     )
 
     print("Bắt đầu train...")
