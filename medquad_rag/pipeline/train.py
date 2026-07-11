@@ -18,6 +18,7 @@ import os
 
 import torch
 from datasets import load_dataset
+from transformers import ProgressCallback
 from transformers import (
     AutoModelForCausalLM,
     AutoTokenizer,
