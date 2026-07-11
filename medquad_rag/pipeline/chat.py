@@ -36,16 +36,16 @@ def load_chat_model():
     if USE_GPU:
         base_model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL_NAME,
-            dtype=torch.float16,
+            torch_dtype=torch.float16,
             device_map="auto",
         )
     else:
         base_model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL_NAME,
-            dtype=torch.float32,
+            torch_dtype=torch.float32,
             device_map={"": "cpu"},
         )
-
+        
     # Gắn adapter (kiến thức đã train) vào model gốc
     model = PeftModel.from_pretrained(base_model, str(ADAPTER_DIR))
     model.eval()

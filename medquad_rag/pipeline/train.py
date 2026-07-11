@@ -13,8 +13,8 @@ Cách chạy:
 Sau khi train xong, model LoRA sẽ được lưu vào src.config.ADAPTER_DIR
 (mặc định: output/output_model)
 """
-
 import os
+os.environ["CUDA_VISIBLE_DEVICES"] = "0"
 
 import torch
 from datasets import load_dataset
