@@ -54,7 +54,7 @@ def load_model_and_tokenizer():
         model = AutoModelForCausalLM.from_pretrained(
             BASE_MODEL_NAME,
             quantization_config=bnb_config,
-            device_map="auto",
+            device_map={"": 0}
         )
         model = prepare_model_for_kbit_training(model)
     else:
