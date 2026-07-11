@@ -70,7 +70,7 @@ def load_model_under_test():
 
     base_model = AutoModelForCausalLM.from_pretrained(
         BASE_MODEL_NAME,
-        dtype=torch.float16 if USE_GPU else torch.float32,
+        torch_dtype=torch.float16 if USE_GPU else torch.float32,
         device_map="auto" if USE_GPU else {"": "cpu"},
     )
     model = PeftModel.from_pretrained(base_model, str(ADAPTER_DIR))
@@ -104,7 +104,7 @@ def load_judge_model():
     elif USE_GPU:
         model = AutoModelForCausalLM.from_pretrained(
             JUDGE_MODEL_NAME,
-            dtype=torch.float16,
+            torch_dtype=torch.float16,
             device_map="auto",
         )
     else:
@@ -114,7 +114,7 @@ def load_judge_model():
         )
         model = AutoModelForCausalLM.from_pretrained(
             JUDGE_MODEL_NAME,
-            dtype=torch.float32,
+            torch_dtype=torch.float32,
             device_map={"": "cpu"},
         )
 
