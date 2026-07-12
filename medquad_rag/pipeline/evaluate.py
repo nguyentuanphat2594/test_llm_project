@@ -236,7 +236,7 @@ def main():
         llm=llm_judge,
         embeddings=embeddings,
         run_config=RunConfig(
-            timeout=7200,       # tăng timeout mỗi job lên 30 phút (model local chậm)
+            timeout=7200,       # tăng timeout mỗi job lên 120 phút (model local chậm)
             max_workers=1,     # chạy tuần tự thật sự, đúng bản chất model local trên 1 GPU
         ),
     )
