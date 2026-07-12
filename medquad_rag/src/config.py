@@ -27,12 +27,12 @@ INPUT_FILE = DATA_DIR / "medquad.json"
 TRAIN_FILE = OUTPUT_DIR / "train.jsonl"
 VAL_FILE = OUTPUT_DIR / "val.jsonl"
 TEST_FILE = OUTPUT_DIR / "test.jsonl"
-TRAIN_SAMPLE_LIMIT = 300  # số sample lấy từ medquad.json để build dataset (demo)
+TRAIN_SAMPLE_LIMIT = 1200  # số sample lấy từ medquad.json để build dataset (demo)
 
 # Tỷ lệ chia train/val/test (phải cộng lại = 1.0)
-TRAIN_RATIO = 0.8
+TRAIN_RATIO = 0.75
 VAL_RATIO = 0.1
-TEST_RATIO = 0.1
+TEST_RATIO = 0.15
 
 # Seed cố định để chia tập lần nào cũng ra kết quả giống nhau (reproducible)
 SPLIT_SEED = 42

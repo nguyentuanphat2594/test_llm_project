@@ -44,6 +44,7 @@ from ragas.metrics import (
     context_precision,
     context_recall,
 )
+from ragas.run_config import RunConfig
 
 from src.config import (
     ADAPTER_DIR,
@@ -234,6 +235,10 @@ def main():
         metrics=select_metrics(),
         llm=llm_judge,
         embeddings=embeddings,
+        run_config=RunConfig(
+            timeout=600,       # tăng timeout mỗi job lên 10 phút (model local chậm)
+            max_workers=1,     # chạy tuần tự thật sự, đúng bản chất model local trên 1 GPU
+        ),
     )
 
     print("=" * 50)
