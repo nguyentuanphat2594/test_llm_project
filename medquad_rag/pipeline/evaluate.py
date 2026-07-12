@@ -124,7 +124,7 @@ def load_judge_model():
         "text-generation",
         model=model,
         tokenizer=tokenizer,
-        max_new_tokens=512,
+        max_new_tokens=256,
         do_sample=False,  # tắt random để LLM Judge chấm điểm ổn định hơn
     )
 
@@ -236,7 +236,7 @@ def main():
         llm=llm_judge,
         embeddings=embeddings,
         run_config=RunConfig(
-            timeout=600,       # tăng timeout mỗi job lên 10 phút (model local chậm)
+            timeout=1200,       # tăng timeout mỗi job lên 30 phút (model local chậm)
             max_workers=1,     # chạy tuần tự thật sự, đúng bản chất model local trên 1 GPU
         ),
     )

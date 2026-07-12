@@ -65,7 +65,7 @@ EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"  # free, nhẹ
 # khác (không phải model chat thông thường), độ khớp với GPT-4/con người
 # 72-85% theo benchmark của nhóm tác giả. Free, chạy local.
 # https://huggingface.co/prometheus-eval/prometheus-7b-v2.0
-JUDGE_MODEL_NAME = os.environ.get("MEDQUAD_JUDGE_MODEL", "prometheus-eval/prometheus-7b-v2.0")
+JUDGE_MODEL_NAME = os.environ.get("MEDQUAD_JUDGE_MODEL", "Qwen/Qwen2.5-1.5B-Instruct")
 
 # Prometheus 2 là model 7B -> cần ~16GB VRAM ở bf16. Load 4-bit để vừa GPU free
 # tier (Colab T4 / Kaggle T4-P100, ~15-16GB VRAM), chỉ cần ~5-6GB.
