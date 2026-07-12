@@ -6,7 +6,8 @@ bitsandbytes==0.47.0
 datasets==4.0.0
 
 # evaluate.py
-ragas>=0.2.10
-langchain
-langchain-community
+ragas==0.2.10
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-core==0.2.38
 sentence-transformers
