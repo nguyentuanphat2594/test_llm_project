@@ -76,8 +76,10 @@ def to_eval_sample(sample):
 def main():
     dataset = load_dataset(INPUT_FILE)
 
-    valid_samples = [s for s in dataset[:TRAIN_SAMPLE_LIMIT] if validate_sample(s)]
-    skipped = len(dataset[:TRAIN_SAMPLE_LIMIT]) - len(valid_samples)
+    samples = dataset if TRAIN_SAMPLE_LIMIT is None else dataset[:TRAIN_SAMPLE_LIMIT]
+
+    valid_samples = [s for s in samples if validate_sample(s)]
+    skipped = len(samples) - len(valid_samples)
 
     train_raw, val_raw, test_raw = split_dataset(
         valid_samples,
