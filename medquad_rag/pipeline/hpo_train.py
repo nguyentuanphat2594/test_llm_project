@@ -126,7 +126,15 @@ def load_base_model_and_tokenizer():
             torch_dtype=torch.float16,
             device_map={"": 0},
         )
-        model = prepare_model_for_kbit_training(model)
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=True,
+            # QUAN TRỌNG: mặc định (reentrant=True) gây đứt gradient khi kết hợp
+            # quantize 4-bit + chỉ LoRA adapter là trainable -> grad_norm luôn ra 0.0
+            # dù model vẫn "chạy" và in loss bình thường. use_reentrant=False mới
+            # thực sự lan gradient đúng trong trường hợp này.
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+        )
         model.config.use_cache = False
     else:
         model = AutoModelForCausalLM.from_pretrained(

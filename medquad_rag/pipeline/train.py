@@ -68,7 +68,11 @@ def load_model_and_tokenizer():
             torch_dtype=torch.float16,
             device_map={"": 0},
         )
-        model = prepare_model_for_kbit_training(model)
+        model = prepare_model_for_kbit_training(
+            model,
+            use_gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
+        )
         model.config.use_cache = False
     else:
         print("Không có GPU -> load model ở CPU (float32, sẽ train chậm hơn)")
