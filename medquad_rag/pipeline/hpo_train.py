@@ -182,6 +182,7 @@ class TrialRunner:
             target_modules=TARGET_MODULES,
         )
         peft_model = get_peft_model(self.base_model, lora_config)
+        peft_model.print_trainable_parameters()  # debug: xác nhận LoRA có tham số trainable > 0
 
         trial_dir = HPO_STUDY_DIR / f"trial_{trial.number}"
         args = SFTConfig(
@@ -283,6 +284,7 @@ def train_final(tokenizer, train_dataset, val_dataset, best_params):
         target_modules=TARGET_MODULES,
     )
     model = get_peft_model(model, lora_config)
+    model.print_trainable_parameters()  # debug: xác nhận LoRA có tham số trainable > 0
 
     args = SFTConfig(
         output_dir=str(ADAPTER_DIR),

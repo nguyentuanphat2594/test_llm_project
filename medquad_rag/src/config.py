@@ -53,14 +53,14 @@ ADAPTER_DIR = OUTPUT_DIR / "output_model"
 
 # Giai đoạn 1 (search): chạy N_TRIALS trial trên 1 subset cố định của Train,
 # dùng pruner để cắt sớm trial kém -> tiết kiệm GPU trước khi train full data.
-N_TRIALS = int(os.environ.get("MEDQUAD_N_TRIALS", "8"))
+N_TRIALS = int(os.environ.get("MEDQUAD_N_TRIALS", "1"))
 
 # Tỉ lệ subset của Train dùng trong giai đoạn search (không phải toàn bộ Train)
-HPO_SUBSET_RATIO = float(os.environ.get("MEDQUAD_HPO_SUBSET_RATIO", "0.35"))
+HPO_SUBSET_RATIO = float(os.environ.get("MEDQUAD_HPO_SUBSET_RATIO", "0.2"))
 
 # Trần số step cho MỖI trial ở giai đoạn search (chặn trial "tốt nhưng chạy
 # mãi không dừng" ăn hết thời gian của các trial khác)
-HPO_MAX_STEPS = int(os.environ.get("MEDQUAD_HPO_MAX_STEPS", "400"))
+HPO_MAX_STEPS = int(os.environ.get("MEDQUAD_HPO_MAX_STEPS", "200"))
 
 # Cứ load 1 base model thì dùng cho MODEL_GROUP_SIZE trial liên tiếp (mỗi
 # trial vẫn có LoRA adapter RIÊNG, độc lập) trước khi giải phóng và load lại,
