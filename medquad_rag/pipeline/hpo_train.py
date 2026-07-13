@@ -211,7 +211,7 @@ class TrialRunner:
             eval_steps=EVAL_STEPS,
             save_strategy="no",             # trial chỉ để tìm hyperparameter, không cần lưu checkpoint
             report_to="none",
-            fp16=False,
+            fp16=USE_GPU,       # bật loss scaling khi chạy fp16 thật trên GPU
             use_cpu=not USE_GPU,
             dataset_text_field="text",
             max_length=1024,

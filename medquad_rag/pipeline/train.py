@@ -137,7 +137,7 @@ def main():
         load_best_model_at_end=val_dataset is not None,
         metric_for_best_model="eval_loss" if val_dataset is not None else None,
         greater_is_better=False,
-        fp16=False,
+        fp16=USE_GPU,       # bật loss scaling khi chạy fp16 thật trên GPU
         use_cpu=not USE_GPU,
         report_to="none",
         dataset_text_field="text",
