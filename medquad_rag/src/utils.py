@@ -2,9 +2,8 @@
 utils.py
 --------
 Các hàm tiện ích dùng chung (đọc/ghi dữ liệu, validate sample, chia
-train/val/test) — tách ra từ build_train_dataset.py để pipeline/evaluate.py
-cũng có thể tái sử dụng khi cần đọc trực tiếp medquad.json thay vì chỉ dùng
-vài câu hỏi mẫu.
+train/val/test, load+format dataset cho SFTTrainer) -- được tái sử dụng bởi
+build_train_dataset.py, train.py VÀ hpo_train.py.
 """
 
 import json
@@ -41,14 +40,6 @@ def split_dataset(samples, train_ratio, val_ratio, test_ratio, seed):
     """
     Xáo trộn (deterministic, theo seed) rồi chia danh sách sample thành 3
     tập train/val/test theo tỷ lệ cho trước.
-
-    Args:
-        samples: list các sample (đã validate)
-        train_ratio, val_ratio, test_ratio: tỷ lệ chia, phải cộng lại ~1.0
-        seed: random seed để chia lần nào cũng ra kết quả giống nhau
-
-    Returns:
-        (train_samples, val_samples, test_samples)
     """
     total_ratio = train_ratio + val_ratio + test_ratio
     if abs(total_ratio - 1.0) > 1e-6:
@@ -62,9 +53,52 @@ def split_dataset(samples, train_ratio, val_ratio, test_ratio, seed):
     n = len(shuffled)
     n_train = int(n * train_ratio)
     n_val = int(n * val_ratio)
-    # test lấy phần còn lại, tránh rơi rớt sample do làm tròn số
     train_samples = shuffled[:n_train]
     val_samples = shuffled[n_train:n_train + n_val]
     test_samples = shuffled[n_train + n_val:]
 
     return train_samples, val_samples, test_samples
+
+
+def format_chat_dataset(tokenizer, path, required=True):
+    """
+    Đọc 1 file .jsonl dạng {"messages": [...]} (train.jsonl / val.jsonl) và
+    áp dụng chat template của tokenizer -> dataset có cột "text" sẵn sàng
+    đưa vào SFTTrainer (dataset_text_field="text").
+
+    Dùng chung cho pipeline/train.py VÀ pipeline/hpo_train.py để tránh lệch
+    logic format giữa 2 nơi.
+
+    Args:
+        required: nếu True mà file không tồn tại -> raise lỗi rõ ràng.
+                  Nếu False -> trả về None (dùng cho val.jsonl khi không bắt
+                  buộc phải có, ví dụ script train.py chạy nhanh không HPO).
+
+    Returns:
+        datasets.Dataset (đã có cột "text") hoặc None.
+    """
+    from datasets import load_dataset as hf_load_dataset
+
+    if not os.path.exists(path):
+        if required:
+            raise FileNotFoundError(
+                f"Không tìm thấy {path}. "
+                f"Hãy chạy `python -m pipeline.build_train_dataset` trước để tạo file này."
+            )
+        return None
+
+    dataset = hf_load_dataset("json", data_files=str(path), split="train")
+
+    if len(dataset) == 0:
+        return None
+
+    def format_sample(sample):
+        text = tokenizer.apply_chat_template(
+            sample["messages"],
+            tokenize=False,
+            add_generation_prompt=False,
+        )
+        return {"text": text}
+
+    dataset = dataset.map(format_sample)
+    return dataset

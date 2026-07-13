@@ -5,6 +5,9 @@ accelerate==1.10.1
 bitsandbytes==0.47.0
 datasets==4.0.0
 
+# hyperparameter optimization (pipeline/hpo_train.py)
+optuna==4.0.0
+
 # evaluate.py
 ragas==0.2.10
 langchain==0.2.16
