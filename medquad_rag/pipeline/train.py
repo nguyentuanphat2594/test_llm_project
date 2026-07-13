@@ -70,9 +70,10 @@ def load_model_and_tokenizer():
         )
         model = prepare_model_for_kbit_training(
             model,
-            use_gradient_checkpointing=True,
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            use_gradient_checkpointing=False,
         )
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
         model.config.use_cache = False
     else:
         print("Không có GPU -> load model ở CPU (float32, sẽ train chậm hơn)")
@@ -122,6 +123,8 @@ def main():
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         learning_rate=LR,
         weight_decay=WEIGHT_DECAY,
         warmup_ratio=WARMUP_RATIO,

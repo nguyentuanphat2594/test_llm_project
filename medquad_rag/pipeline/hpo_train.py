@@ -128,13 +128,15 @@ def load_base_model_and_tokenizer():
         )
         model = prepare_model_for_kbit_training(
             model,
-            use_gradient_checkpointing=True,
-            # QUAN TRỌNG: mặc định (reentrant=True) gây đứt gradient khi kết hợp
-            # quantize 4-bit + chỉ LoRA adapter là trainable -> grad_norm luôn ra 0.0
-            # dù model vẫn "chạy" và in loss bình thường. use_reentrant=False mới
-            # thực sự lan gradient đúng trong trường hợp này.
-            gradient_checkpointing_kwargs={"use_reentrant": False},
+            # Không để hàm này tự bật gradient checkpointing -- SFTTrainer sẽ
+            # tự bật lại theo SFTConfig bên dưới, 2 bên bật không đồng bộ
+            # (thiếu use_reentrant=False) là nguyên nhân gây đứt gradient.
+            use_gradient_checkpointing=False,
         )
+        # Vẫn cần dòng này để input embeddings (đang bị đóng băng/quantize)
+        # cho phép gradient chảy qua, dù checkpointing được bật ở đâu.
+        if hasattr(model, "enable_input_require_grads"):
+            model.enable_input_require_grads()
         model.config.use_cache = False
     else:
         model = AutoModelForCausalLM.from_pretrained(
@@ -199,6 +201,8 @@ class TrialRunner:
             per_device_train_batch_size=2,
             per_device_eval_batch_size=2,
             gradient_accumulation_steps=4,
+            gradient_checkpointing=True,
+            gradient_checkpointing_kwargs={"use_reentrant": False},
             learning_rate=lr,
             weight_decay=weight_decay,
             warmup_ratio=WARMUP_RATIO,
@@ -300,6 +304,8 @@ def train_final(tokenizer, train_dataset, val_dataset, best_params):
         per_device_train_batch_size=2,
         per_device_eval_batch_size=2,
         gradient_accumulation_steps=4,
+        gradient_checkpointing=True,
+        gradient_checkpointing_kwargs={"use_reentrant": False},
         learning_rate=best_params["learning_rate"],
         weight_decay=best_params["weight_decay"],
         warmup_ratio=WARMUP_RATIO,
