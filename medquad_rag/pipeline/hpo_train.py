@@ -45,13 +45,14 @@ from transformers import (
     ProgressCallback,
     TrainerCallback,
 )
-from peft import LoraConfig, get_peft_model, prepare_model_for_kbit_training
+from peft import LoraConfig, prepare_model_for_kbit_training
 from trl import SFTTrainer, SFTConfig
 
 from src.config import (
     ADAPTER_DIR,
     BASE_MODEL_NAME,
     EARLY_STOPPING_PATIENCE,
+    EVAL_MAX_SAMPLES,
     EVAL_STEPS,
     FINAL_MAX_EPOCHS,
     HPO_MAX_STEPS,
@@ -67,14 +68,24 @@ from src.config import (
     LORA_R_MIN,
     LR_MAX,
     LR_MIN,
+    MAX_NEW_TOKENS_TRAIN_GEN,
     MODEL_GROUP_SIZE,
     N_TRIALS,
     OUTPUT_DIR,
+    PREDICTIONS_CSV,
+    SUMMARY_CSV,
+    TEST_FILE,
     TRAIN_FILE,
     VAL_FILE,
     WARMUP_RATIO,
     WEIGHT_DECAY_MAX,
     WEIGHT_DECAY_MIN,
+)
+from src.evaluation import (
+    append_summary_row,
+    compute_perplexity,
+    load_raw_test_samples,
+    save_predictions_csv,
 )
 from src.utils import format_chat_dataset
 
@@ -191,8 +202,6 @@ class TrialRunner:
             task_type="CAUSAL_LM",
             target_modules=TARGET_MODULES,
         )
-        peft_model = get_peft_model(self.base_model, lora_config)
-        peft_model.print_trainable_parameters()  # debug: xác nhận LoRA có tham số trainable > 0
 
         trial_dir = HPO_STUDY_DIR / f"trial_{trial.number}"
         args = SFTConfig(
@@ -214,17 +223,19 @@ class TrialRunner:
             fp16=USE_GPU,       # bật loss scaling khi chạy fp16 thật trên GPU
             use_cpu=not USE_GPU,
             dataset_text_field="text",
-            max_length=1024,
+            max_length=600,
             disable_tqdm=True,
         )
 
         trainer = SFTTrainer(
-            model=peft_model,
+            model=self.base_model,      # model THÔ, chưa gắn LoRA
             args=args,
             train_dataset=self.subset_dataset,
             eval_dataset=self.val_dataset,
+            peft_config=lora_config,    # để SFTTrainer tự gắn LoRA đúng thứ tự
             callbacks=[OptunaPruningCallback(trial)],
         )
+        trainer.model.print_trainable_parameters()   # debug vẫn giữ được, chỉ đổi chỗ gọi
 
         try:
             trainer.train()
@@ -235,7 +246,7 @@ class TrialRunner:
             raise
         finally:
             # Gỡ adapter, trả base model "sạch" về cho trial kế tiếp trong nhóm
-            self.base_model = peft_model.unload()
+            self.base_model = trainer.model.unload()
             del trainer
             if USE_GPU:
                 torch.cuda.empty_cache()
@@ -295,8 +306,6 @@ def train_final(tokenizer, train_dataset, val_dataset, best_params):
         task_type="CAUSAL_LM",
         target_modules=TARGET_MODULES,
     )
-    model = get_peft_model(model, lora_config)
-    model.print_trainable_parameters()  # debug: xác nhận LoRA có tham số trainable > 0
 
     args = SFTConfig(
         output_dir=str(ADAPTER_DIR),
@@ -318,11 +327,11 @@ def train_final(tokenizer, train_dataset, val_dataset, best_params):
         load_best_model_at_end=True,
         metric_for_best_model="eval_loss",
         greater_is_better=False,
-        fp16=False,
+        fp16=USE_GPU,       # bật loss scaling khi chạy fp16 thật trên GPU (đồng bộ với TrialRunner)
         use_cpu=not USE_GPU,
         report_to="none",
         dataset_text_field="text",
-        max_length=1024,
+        max_length=600,
         disable_tqdm=False,
     )
 
@@ -331,11 +340,16 @@ def train_final(tokenizer, train_dataset, val_dataset, best_params):
         args=args,
         train_dataset=train_dataset,
         eval_dataset=val_dataset,
+        peft_config=lora_config,    # BUG CŨ: lora_config được tạo nhưng chưa từng gắn
+                                     # vào model -- final training thực chất train model
+                                     # KHÔNG có LoRA nào cả. Để SFTTrainer tự gắn đúng
+                                     # thứ tự (đồng bộ với fp16), giống TrialRunner.
         callbacks=[
             ProgressCallback(),
             EarlyStoppingCallback(early_stopping_patience=EARLY_STOPPING_PATIENCE),
         ],
     )
+    trainer.model.print_trainable_parameters()   # debug: xác nhận LoRA có tham số trainable > 0
 
     print("[Final] Bắt đầu final training (đây là lần train DUY NHẤT trên toàn bộ Train)...")
     trainer.train()
@@ -343,6 +357,37 @@ def train_final(tokenizer, train_dataset, val_dataset, best_params):
     print(f"[Final] Xong. Best checkpoint đã tự load. Lưu Final Adapter vào {ADAPTER_DIR}")
     trainer.save_model(str(ADAPTER_DIR))
     tokenizer.save_pretrained(str(ADAPTER_DIR))
+
+    eval_result = trainer.evaluate()
+    val_loss = eval_result.get("eval_loss")
+
+    print("\n[Final] Đang tải tập test để tính ROUGE/BLEU...")
+    test_dataset = load_raw_test_samples(TEST_FILE)
+    if test_dataset is not None:
+        print(f"[Final] Số câu hỏi test: {len(test_dataset)}")
+        df = save_predictions_csv(
+            model=trainer.model,
+            tokenizer=tokenizer,
+            dataset=test_dataset,
+            output_path=str(PREDICTIONS_CSV),
+            max_new_tokens=MAX_NEW_TOKENS_TRAIN_GEN,
+            max_samples=EVAL_MAX_SAMPLES,
+        )
+        append_summary_row(
+            {
+                "model": BASE_MODEL_NAME,
+                **best_params,
+                "rouge1": df["rouge1"].mean(),
+                "rouge2": df["rouge2"].mean(),
+                "rougeL": df["rougeL"].mean(),
+                "bleu": df["bleu"].mean(),
+                "perplexity": compute_perplexity(val_loss) if val_loss is not None else None,
+                "val_loss": val_loss,
+            },
+            SUMMARY_CSV,
+        )
+    else:
+        print(f"[Final] {TEST_FILE} rỗng/không tồn tại -- bỏ qua bước ROUGE/BLEU.")
 
 
 # ============================================================

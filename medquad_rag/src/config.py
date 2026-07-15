@@ -25,14 +25,14 @@ INPUT_FILE = DATA_DIR / "medquad.json"
 TRAIN_FILE = OUTPUT_DIR / "train.jsonl"
 VAL_FILE = OUTPUT_DIR / "val.jsonl"
 TEST_FILE = OUTPUT_DIR / "test.jsonl"
-TRAIN_SAMPLE_LIMIT = 11548  # số sample lấy từ medquad.json để build dataset
+TRAIN_SAMPLE_LIMIT = 20000  # số sample lấy từ medquad.json để build dataset
 
 # Tỷ lệ chia train/val/test (phải cộng lại = 1.0)
 # 80% train / 10% val (theo dõi eval_loss + chọn hyperparameter) /
 # 10% test (chạm đúng 1 lần cuối cùng, xem pipeline/evaluate.py)
-TRAIN_RATIO = 0.8
-VAL_RATIO = 0.1
-TEST_RATIO = 0.1
+TRAIN_RATIO = 0.7
+VAL_RATIO = 0.15
+TEST_RATIO = 0.15
 
 # Seed cố định để chia tập lần nào cũng ra kết quả giống nhau (reproducible).
 # QUAN TRỌNG: không chạy lại build_train_dataset.py với seed khác sau khi đã
@@ -90,7 +90,7 @@ LORA_ALPHA_MULT = 2  # alpha = LORA_ALPHA_MULT * r
 
 # Cố định để tiết kiệm 1 chiều search (đã thống nhất)
 WARMUP_RATIO = 0.03
-EVAL_STEPS = 100
+EVAL_STEPS = 200
 EARLY_STOPPING_PATIENCE = 3
 
 # Giai đoạn 2 (final): trần epoch cao, early stopping tự cắt sớm hơn nếu hội
@@ -101,6 +101,16 @@ FINAL_MAX_EPOCHS = int(os.environ.get("MEDQUAD_FINAL_MAX_EPOCHS", "3"))
 EMBEDDING_MODEL_NAME = "sentence-transformers/all-MiniLM-L6-v2"
 JUDGE_MODEL_NAME = os.environ.get("MEDQUAD_JUDGE_MODEL", "prometheus-eval/prometheus-7b-v2.0")
 JUDGE_LOAD_IN_4BIT = os.environ.get("MEDQUAD_JUDGE_4BIT", "1") != "0"
+
+# ---- Đánh giá nhanh bằng ROUGE/BLEU/Perplexity (chạy ngay sau train, xem
+# src/evaluation.py) -- trước bước LLM Judge (RAGAs) ở trên, dùng để có con
+# số tham khảo nhanh mà không cần load thêm judge model.
+PREDICTIONS_CSV = OUTPUT_DIR / "evaluation_results.csv"
+SUMMARY_CSV = OUTPUT_DIR / "training_summary.csv"
+# Số mẫu tối đa lấy từ test.jsonl để tính ROUGE/BLEU (generate tuần tự từng
+# mẫu khá chậm, không chạy hết toàn bộ test set theo mặc định). Tăng lên
+# nếu cần con số đáng tin hơn để báo cáo (đổi lấy thời gian chạy lâu hơn).
+EVAL_MAX_SAMPLES = int(os.environ.get("MEDQUAD_EVAL_MAX_SAMPLES", "100"))
 
 # ---- Sinh câu trả lời ----
 MAX_NEW_TOKENS_TRAIN_GEN = 300
