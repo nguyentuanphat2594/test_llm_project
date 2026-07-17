@@ -175,7 +175,7 @@ def load_judge_llm():
             base_url=JUDGE_API_BASE,
             api_key=JUDGE_API_KEY,
             temperature=0,
-            max_tokens=512,
+            max_tokens=1024,
             callbacks=[JudgeDebugCallback()],
             rate_limiter=rate_limiter,
             max_retries=6,    
