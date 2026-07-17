@@ -1,0 +1,24 @@
+transformers==4.55.4
+peft==0.17.0
+trl==0.21.0
+accelerate==1.10.1
+bitsandbytes==0.47.0
+datasets==4.0.0
+
+# evaluate.py (RAGAs)
+ragas==0.2.10
+langchain==0.2.16
+langchain-community==0.2.16
+langchain-core==0.2.38
+sentence-transformers
+
+# evaluate.py -- giám khảo qua API (ChatOpenAI-compatible). Chỉ thật sự cần
+# khi đặt MEDQUAD_JUDGE_API_KEY; nếu không set, code fallback về Prometheus
+# cục bộ (không cần package này) nhưng cứ cài sẵn cho tiện.
+langchain-openai==0.1.23
+
+# src/evaluation.py -- ROUGE/BLEU/perplexity + xuất CSV
+evaluate==0.4.3
+rouge_score==0.1.2   # bắt buộc cho evaluate.load("rouge")
+nltk==3.9.1          # word_tokenize cho BLEU
+pandas==2.2.2        # đọc/ghi CSV dự đoán
