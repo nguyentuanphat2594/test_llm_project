@@ -22,6 +22,7 @@ Cài đặt cần thiết:
     pip install -r requirements_ver1.txt
 """
 
+import json
 import logging
 import os
 
@@ -264,18 +265,38 @@ def load_predictions():
         )
 
     df = pd.read_csv(PREDICTIONS_CSV)
+    has_contexts_col = "contexts" in df.columns
 
     samples = []
     for _, row in df.iterrows():
+        contexts = []
+        if has_contexts_col:
+            raw = row.get("contexts", "[]")
+            try:
+                contexts = json.loads(raw) if isinstance(raw, str) else []
+            except (json.JSONDecodeError, TypeError):
+                contexts = []
+
         samples.append({
             "question": row["question"],
             "answer": row["prediction"],
             "ground_truth": row["reference"],
-            # CSV hiện chưa lưu contexts -- chỉ cần khi USE_RAG=True.
-            # Nếu muốn dùng đủ faithfulness/context_precision/context_recall,
-            # sửa save_predictions_csv() để lưu thêm cột "contexts" (JSON list).
-            "contexts": [],
+            "contexts": contexts,
         })
+
+    if has_contexts_col and USE_RAG:
+        n_with_context = sum(1 for s in samples if s["contexts"])
+        print(
+            f"Đã đọc cột 'contexts' từ CSV: {n_with_context}/{len(samples)} mẫu có "
+            f"context thật (RAG) -> faithfulness/context_precision/context_recall "
+            f"có thể dùng được."
+        )
+    elif USE_RAG and not has_contexts_col:
+        print(
+            "[CẢNH BÁO] USE_RAG=True nhưng CSV không có cột 'contexts' -- CSV này "
+            "có thể được sinh bởi bản save_predictions_csv() CŨ (chưa hỗ trợ RAG). "
+            "Chạy lại `run_evaluation.main()` để sinh CSV mới có contexts."
+        )
 
     return samples
 

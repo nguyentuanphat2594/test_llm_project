@@ -45,6 +45,7 @@ from src.config import (
     PROMPT_STYLE,
     SYSTEM_PROMPT,
     TEST_FILE,
+    USE_RAG,
 )
 from src.evaluation import save_predictions_csv
 
@@ -136,6 +137,14 @@ def main(max_samples: int = None, resume: bool = False):
 
     print(f"Số câu hỏi test: {len(test_raw)} | Sẽ chạy: {min(len(test_raw), max_samples)}")
 
+    retrieve_context_fn = None
+    if USE_RAG:
+        print("USE_RAG=True -> sẽ retrieve context THẬT cho mỗi câu hỏi (qua rag_bridge).")
+        from src.rag_bridge import get_context_texts
+        retrieve_context_fn = get_context_texts
+    else:
+        print("USE_RAG=False -> chạy Q&A thuần, không có ngữ cảnh (như cũ).")
+
     save_predictions_csv(
         model=model,
         tokenizer=tokenizer,
@@ -146,6 +155,7 @@ def main(max_samples: int = None, resume: bool = False):
         max_new_tokens=MAX_NEW_TOKENS_TRAIN_GEN,
         max_samples=max_samples,
         resume=resume,
+        retrieve_context_fn=retrieve_context_fn,
     )
     print(f"Đã lưu CSV dự đoán -> {PREDICTIONS_CSV}")
 

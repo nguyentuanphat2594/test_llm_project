@@ -16,6 +16,7 @@ Hàm save_predictions_csv() xuất kết quả inference cho LLM-as-a-judge.
     model khác nhau (model cũ ở các câu đầu, model mới ở các câu sau).
 """
 
+import json
 import math
 import os
 from typing import Dict
@@ -106,11 +107,14 @@ def save_predictions_csv(
     max_samples: int = 1700,
     resume: bool = False,
     save_every: int = 5,
+    retrieve_context_fn=None,
+    rag_top_k: int = 3,
 ):
     """
     Chạy inference trên tập test và lưu kết quả ra CSV.
 
     File CSV: question, reference, prediction, rouge1, rouge2, rougeL, bleu
+    (+ "contexts" nếu retrieve_context_fn được truyền vào).
     Sẵn sàng cho LLM-as-a-judge pipeline sau này.
 
     Args:
@@ -129,6 +133,14 @@ def save_predictions_csv(
         save_every: Ghi CSV ra đĩa sau mỗi bấy nhiêu mẫu mới (không đợi
             generate hết mới ghi 1 lần) -- giảm rủi ro mất tiến độ nếu bị
             ngắt giữa chừng (Kaggle hết giờ, mất kết nối, v.v.)
+        retrieve_context_fn: hàm nhận (question, top_k) -> List[str] chunks.
+            Nếu truyền vào (khi USE_RAG=True), mỗi câu hỏi sẽ được retrieve
+            context THẬT trước khi build prompt, và cột "contexts" (JSON
+            list) sẽ được lưu vào CSV -- dùng cho faithfulness/context_*
+            metrics ở pipeline/evaluate.py. Nếu để None (mặc định), giữ
+            nguyên hành vi cũ: prompt Q&A thuần, không có ngữ cảnh.
+        rag_top_k: số chunks lấy về mỗi câu hỏi khi retrieve_context_fn
+            được dùng.
     """
     model.eval()
     num_samples = min(len(dataset), max_samples)
@@ -157,16 +169,30 @@ def save_predictions_csv(
         if str(question) in done_questions:
             continue
 
+        # ---- RAG: retrieve context THẬT nếu retrieve_context_fn được truyền ----
+        contexts = []
+        if retrieve_context_fn is not None:
+            try:
+                contexts = retrieve_context_fn(question, top_k=rag_top_k)
+            except Exception as e:
+                print(f"[CẢNH BÁO][RAG] Retrieve context lỗi cho câu '{question[:50]}...': {e} -> dùng prompt không context.")
+                contexts = []
+
+        context_block = ""
+        if contexts:
+            joined_context = "\n\n".join(contexts)
+            context_block = f"Context:\n{joined_context}\n\n"
+
         if prompt_style == "chatml":
             prompt = (
                 f"<|im_start|>system\n{system_prompt}<|im_end|>\n"
-                f"<|im_start|>user\n{question}<|im_end|>\n"
+                f"<|im_start|>user\n{context_block}{question}<|im_end|>\n"
                 f"<|im_start|>assistant\n"
             )
         else:
             prompt = (
                 f"### Instruction:\n{system_prompt}\n\n"
-                f"### Input:\n{question}\n\n"
+                f"### Input:\n{context_block}{question}\n\n"
                 f"### Response:\n"
             )
 
@@ -203,6 +229,10 @@ def save_predictions_csv(
             "question": question,
             "reference": reference,
             "prediction": prediction,
+            # Lưu contexts dạng JSON string (list) để evaluate.py đọc lại
+            # dùng cho faithfulness/context_precision/context_recall. Rỗng
+            # "[]" nếu không dùng RAG (retrieve_context_fn=None).
+            "contexts": json.dumps(contexts, ensure_ascii=False),
             "rouge1": round(rouge_scores["rouge1"], 4),
             "rouge2": round(rouge_scores["rouge2"], 4),
             "rougeL": round(rouge_scores["rougeL"], 4),
