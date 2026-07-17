@@ -31,9 +31,6 @@ import torch
 
 from datasets import Dataset
 try:
-    # langchain-huggingface là package mới, thay thế cho
-    # langchain_community.embeddings.HuggingFaceEmbeddings (đã deprecated,
-    # sẽ bị xoá ở LangChain 1.0). Dùng bản mới nếu có sẵn.
     from langchain_huggingface import HuggingFaceEmbeddings
 except ImportError:
     from langchain_community.embeddings import HuggingFaceEmbeddings
@@ -46,10 +43,6 @@ from ragas.metrics import (
     faithfulness,
     AnswerRelevancy,
 )
-# strictness=1 thay vì mặc định 3 -> giảm 3 lệnh gọi/câu xuống còn 1 lệnh/câu.
-# Quan trọng vì free tier Groq cho llama-3.3-70b-versatile giới hạn CỨNG
-# 1.000 request/NGÀY -- strictness=3 sẽ cần ~16.485 request cho 5.495 câu,
-# strictness=1 chỉ cần ~5.495 request (vẫn > 1.000/ngày nhưng đỡ hơn nhiều).
 answer_relevancy_fast = AnswerRelevancy(strictness=1)
 
 from ragas.run_config import RunConfig
@@ -114,9 +107,7 @@ USE_GPU = torch.cuda.is_available()
 
 
 # ============================================================
-# CẤU HÌNH LƯU KẾT QUẢ THEO BATCH (để không mất hết nếu API hết token/lỗi
-# giữa chừng, và để chống mất dữ liệu khi chạy trên Colab - runtime có thể
-# bị ngắt bất cứ lúc nào và /content sẽ bị xoá sạch).
+# CẤU HÌNH LƯU KẾT QUẢ THEO BATCH (để không mất hết nếu API hết token/lỗi giữa chừng
 # ============================================================
 
 # Nếu đang chạy trên Colab và đã mount Drive ở /content/drive, tự động lưu
@@ -184,12 +175,10 @@ def load_judge_llm():
             base_url=JUDGE_API_BASE,
             api_key=JUDGE_API_KEY,
             temperature=0,
-            max_tokens=512,  # 600 quá thấp -> LLMDidNotFinishException khi
-                               # câu trả lời của giám khảo bị cắt giữa chừng
+            max_tokens=512,
             callbacks=[JudgeDebugCallback()],
             rate_limiter=rate_limiter,
-            max_retries=6,    # nếu vẫn dính 429 (bucket khác cùng lúc...),
-                               # tự thử lại có backoff thay vì crash luôn
+            max_retries=6,    
             model_kwargs=model_kwargs,
         )
 
@@ -284,52 +273,65 @@ def load_predictions():
             "contexts": contexts,
         })
 
-    if has_contexts_col and USE_RAG:
+    has_real_contexts = has_contexts_col and any(s["contexts"] for s in samples)
+
+    if has_real_contexts:
         n_with_context = sum(1 for s in samples if s["contexts"])
         print(
             f"Đã đọc cột 'contexts' từ CSV: {n_with_context}/{len(samples)} mẫu có "
             f"context thật (RAG) -> faithfulness/context_precision/context_recall "
             f"có thể dùng được."
         )
-    elif USE_RAG and not has_contexts_col:
+    elif USE_RAG:
         print(
-            "[CẢNH BÁO] USE_RAG=True nhưng CSV không có cột 'contexts' -- CSV này "
-            "có thể được sinh bởi bản save_predictions_csv() CŨ (chưa hỗ trợ RAG). "
-            "Chạy lại `run_evaluation.main()` để sinh CSV mới có contexts."
+            "[CẢNH BÁO] USE_RAG=True nhưng CSV không có contexts thật (cột thiếu "
+            "hoặc toàn bộ rỗng) -- CSV này có thể được sinh bởi bản "
+            "save_predictions_csv() CŨ (chưa hỗ trợ RAG), hoặc lần chạy đó bị lỗi "
+            "retrieve context. Chạy lại `run_evaluation.main()` để sinh CSV mới."
         )
 
-    return samples
+    return samples, has_real_contexts
 
 
 # ============================================================
 # 3. CHẠY RAGAs
 # ============================================================
 
-def select_metrics():
+def select_metrics(has_real_contexts: bool):
     """
     context_precision/context_recall/faithfulness cần "contexts" thật (đo
-    độ bám ngữ cảnh) -- vô nghĩa khi USE_RAG=False (không có contexts nào).
-    Chỉ answer_relevancy (so khớp câu hỏi <-> câu trả lời, không cần context)
-    dùng được trong cả 2 chế độ.
+    độ bám ngữ cảnh) -- vô nghĩa khi không có contexts nào.
+
+    Args:
+        has_real_contexts: True nếu CSV thực sự có ít nhất 1 mẫu với
+            contexts khác rỗng (đã kiểm tra ở load_predictions()).
     """
-    if USE_RAG:
+    if USE_RAG and has_real_contexts:
         print(
-            "USE_RAG=True nhưng CSV dự đoán hiện KHÔNG có cột contexts thật -> "
-            "faithfulness/context_precision/context_recall sẽ không đáng tin. "
-            "Cần bổ sung contexts vào save_predictions_csv() nếu muốn dùng đủ 4 metrics."
+            "USE_RAG=True và CSV có contexts thật -> chấm đủ 4 metrics: "
+            "faithfulness, answer_relevancy, context_precision, context_recall."
         )
         return [faithfulness, answer_relevancy, context_precision, context_recall]
 
+    if USE_RAG and not has_real_contexts:
+        print(
+            "[CẢNH BÁO] USE_RAG=True nhưng CSV không có contexts thật (cột "
+            "'contexts' thiếu hoặc toàn bộ rỗng) -> chỉ chấm answer_relevancy_fast, "
+            "bỏ qua faithfulness/context_precision/context_recall vì không có gì "
+            "để so sánh."
+        )
+        return [answer_relevancy_fast]
+
     print(
         "USE_RAG=False -> bỏ qua faithfulness/context_precision/context_recall "
-        "(cần contexts thật, hiện không có). Chỉ chấm answer_relevancy_fast."
+        "(không dùng RAG, không có contexts). Chỉ chấm answer_relevancy_fast."
     )
     return [answer_relevancy_fast]
 
 
 def main():
     print("Đang đọc CSV dự đoán (đã sinh sẵn từ bước train, gồm ROUGE/BLEU)...")
-    samples = load_predictions()
+    samples, has_real_contexts = load_predictions()
     print(f"Số mẫu: {len(samples)}")
 
     print("Đang khởi tạo model giám khảo (tách biệt model vừa train)...")
@@ -338,7 +340,7 @@ def main():
     print("Đang load embedding model (cho Answer Relevance)...")
     embeddings = HuggingFaceEmbeddings(model_name=EMBEDDING_MODEL_NAME)
 
-    metrics = select_metrics()
+    metrics = select_metrics(has_real_contexts)
 
     # Nếu RESULTS_CSV đã có từ lần chạy trước (bị đứt giữa chừng), đọc lại
     # để biết những câu nào đã chấm rồi -> chỉ chấm tiếp phần còn thiếu,
