@@ -9,13 +9,8 @@ huggingface-hub>=0.34.0,<1.0  # transformers==4.55.4 yêu cầu bản này; nế
 peft==0.17.0
 trl==0.21.0
 accelerate==1.10.1
-bitsandbytes==0.47.0
-torch>=2.4,<2.8        # để tương thích bitsandbytes==0.47.0 + accelerate==1.10.1
-sympy>=1.13.1          # torch>=2.4 cần sympy.printing hoạt động đúng; bản
-                       # sympy cũ hơn/lazy-import thiếu sẽ gây
-                       # "AttributeError: module 'sympy' has no attribute
-                       # 'printing'" khi torch build FX graph (vd lúc
-                       # model.generate() với 4-bit quantization)
+bitsandbytes==0.47.0     
+sympy>=1.13.1   
 datasets==4.0.0
 
 # evaluate.py (RAGAs)
