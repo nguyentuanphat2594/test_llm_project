@@ -1,19 +1,24 @@
 """
-evaluation.py — Đánh giá model: ROUGE, BLEU, Perplexity, và xuất CSV kết quả.
+Đánh giá model bằng ROUGE/BLEU/Perplexity, và sinh CSV kết quả inference
+trên tập test để dùng cho LLM-as-a-judge (pipeline/evaluate.py).
 
-Sử dụng thư viện evaluate của HuggingFace cho các metrics chuẩn.
-Hàm save_predictions_csv() xuất kết quả inference cho LLM-as-a-judge.
+2 hàm chính:
+- build_compute_metrics(): tính ROUGE/BLEU trong lúc TRAIN (Trainer gọi
+  tự động mỗi lần eval trên val set, dùng teacher-forcing nên nhanh
+  nhưng không phản ánh đúng chất lượng generate thật).
+- save_predictions_csv(): chạy inference THẬT (model tự generate từng
+  câu, autoregressive) trên tập test, tính ROUGE/BLEU/độ tương đồng RAG,
+  lưu ra CSV (question, reference, prediction, contexts, rag_used,
+  rag_similarity_pct, rag_raw_contexts, rouge1/2/L, bleu).
 
-ĐÃ SỬA so với bản gốc:
-  - Ghi CSV liên tục mỗi `save_every` mẫu (không đợi generate hết mới ghi
-    1 lần) -- nếu Kaggle/session bị ngắt giữa chừng, tiến độ đã làm không
-    bị mất.
-  - Hỗ trợ resume=True: đọc CSV cũ (nếu có), bỏ qua các câu hỏi đã có sẵn
-    prediction, chỉ generate tiếp phần còn thiếu.
-    CẢNH BÁO: resume chỉ an toàn khi CSV cũ là của ĐÚNG model hiện tại (vd
-    lần chạy trước bị ngắt giữa chừng). Nếu bạn vừa train lại model khác,
-    PHẢI để resume=False (mặc định) để tránh CSV bị lẫn prediction của 2
-    model khác nhau (model cũ ở các câu đầu, model mới ở các câu sau).
+Hỗ trợ:
+- Ghi CSV liên tục (không đợi chạy hết mới ghi) -- tránh mất tiến độ nếu
+  bị ngắt giữa chừng (Kaggle hết giờ, Colab mất kết nối...).
+- resume=True để chạy tiếp phần còn thiếu (CHỈ dùng khi chắc chắn CSV cũ
+  là của đúng model hiện tại).
+- RAG (retrieve_context_fn): nếu truyền vào, mỗi câu hỏi sẽ được lấy
+  context thật, lọc theo % tương đồng, chỉ context đủ liên quan mới được
+  đưa vào prompt.
 """
 
 import json
@@ -109,6 +114,7 @@ def save_predictions_csv(
     save_every: int = 5,
     retrieve_context_fn=None,
     rag_top_k: int = 3,
+    rag_similarity_threshold: float = None,
 ):
     """
     Chạy inference trên tập test và lưu kết quả ra CSV.
@@ -133,14 +139,24 @@ def save_predictions_csv(
         save_every: Ghi CSV ra đĩa sau mỗi bấy nhiêu mẫu mới (không đợi
             generate hết mới ghi 1 lần) -- giảm rủi ro mất tiến độ nếu bị
             ngắt giữa chừng (Kaggle hết giờ, mất kết nối, v.v.)
-        retrieve_context_fn: hàm nhận (question, top_k) -> List[str] chunks.
-            Nếu truyền vào (khi USE_RAG=True), mỗi câu hỏi sẽ được retrieve
-            context THẬT trước khi build prompt, và cột "contexts" (JSON
-            list) sẽ được lưu vào CSV -- dùng cho faithfulness/context_*
-            metrics ở pipeline/evaluate.py. Nếu để None (mặc định), giữ
-            nguyên hành vi cũ: prompt Q&A thuần, không có ngữ cảnh.
+        retrieve_context_fn: hàm nhận (question, top_k, similarity_threshold)
+            -> dict {"used_contexts", "raw_contexts", "scores",
+            "similarity_pct", "rag_used", "retrieval_mode"} (xem
+            src.rag_bridge.get_context_with_similarity). Nếu truyền vào
+            (khi USE_RAG=True), mỗi câu hỏi sẽ được retrieve + lọc context
+            theo độ tương đồng TRƯỚC khi build prompt -- chỉ context ĐỦ
+            liên quan mới được đưa vào model, tránh model học/trả lời theo
+            context sai chủ đề. CSV sẽ lưu thêm cột "rag_used",
+            "rag_similarity_pct", "rag_raw_contexts" để biết câu nào có
+            dùng RAG, độ tương đồng bao nhiêu, và context thô lấy được là
+            gì (kể cả bị loại). Nếu để None (mặc định), giữ nguyên hành vi
+            cũ: prompt Q&A thuần, không có ngữ cảnh.
         rag_top_k: số chunks lấy về mỗi câu hỏi khi retrieve_context_fn
             được dùng.
+        rag_similarity_threshold: ngưỡng % tương đồng (0..1) để CHẤP NHẬN
+            context. None -> dùng SIMILARITY_THRESHOLD mặc định của RAG
+            project (xem rag_bridge). Chỉ có ý nghĩa khi RETRIEVAL_MODE
+            của RAG project là "cosine".
     """
     model.eval()
     num_samples = min(len(dataset), max_samples)
@@ -169,18 +185,27 @@ def save_predictions_csv(
         if str(question) in done_questions:
             continue
 
-        # ---- RAG: retrieve context THẬT nếu retrieve_context_fn được truyền ----
-        contexts = []
+        # ---- RAG: retrieve context THẬT + lọc theo % tương đồng ----
+        used_contexts = []
+        raw_contexts = []
+        similarity_pct_list = []
+        rag_used = False
         if retrieve_context_fn is not None:
             try:
-                contexts = retrieve_context_fn(question, top_k=rag_top_k)
+                rag_result = retrieve_context_fn(
+                    question, top_k=rag_top_k,
+                    similarity_threshold=rag_similarity_threshold,
+                )
+                used_contexts = rag_result["used_contexts"]
+                raw_contexts = rag_result["raw_contexts"]
+                similarity_pct_list = rag_result["similarity_pct"]
+                rag_used = rag_result["rag_used"]
             except Exception as e:
                 print(f"[CẢNH BÁO][RAG] Retrieve context lỗi cho câu '{question[:50]}...': {e} -> dùng prompt không context.")
-                contexts = []
 
         context_block = ""
-        if contexts:
-            joined_context = "\n\n".join(contexts)
+        if used_contexts:
+            joined_context = "\n\n".join(used_contexts)
             context_block = f"Context:\n{joined_context}\n\n"
 
         if prompt_style == "chatml":
@@ -229,10 +254,22 @@ def save_predictions_csv(
             "question": question,
             "reference": reference,
             "prediction": prediction,
-            # Lưu contexts dạng JSON string (list) để evaluate.py đọc lại
-            # dùng cho faithfulness/context_precision/context_recall. Rỗng
-            # "[]" nếu không dùng RAG (retrieve_context_fn=None).
-            "contexts": json.dumps(contexts, ensure_ascii=False),
+            # Context THẬT SỰ được đưa vào prompt (đã lọc theo threshold).
+            # Rỗng "[]" nếu không dùng RAG hoặc không có context nào đạt
+            # threshold -- evaluate.py dùng cột này cho faithfulness/
+            # context_precision/context_recall.
+            "contexts": json.dumps(used_contexts, ensure_ascii=False),
+            # True nếu câu này thực sự có dùng context (đạt threshold).
+            # False -> model trả lời KHÔNG có ngữ cảnh (dù có retrieve
+            # được gì đó, nhưng bị loại vì không đủ liên quan).
+            "rag_used": rag_used,
+            # % tương đồng của từng context retrieve được (song song với
+            # rag_raw_contexts theo thứ tự) -- None nếu RETRIEVAL_MODE
+            # không phải "cosine" (không quy đổi được thang đo).
+            "rag_similarity_pct": json.dumps(similarity_pct_list),
+            # TOÀN BỘ context retrieve được (kể cả bị loại vì không đủ
+            # tương đồng) -- để xem/debug tại sao 1 câu không dùng RAG.
+            "rag_raw_contexts": json.dumps(raw_contexts, ensure_ascii=False),
             "rouge1": round(rouge_scores["rouge1"], 4),
             "rouge2": round(rouge_scores["rouge2"], 4),
             "rougeL": round(rouge_scores["rougeL"], 4),
@@ -253,4 +290,8 @@ def save_predictions_csv(
     print(f"  ROUGE-2 (avg): {df['rouge2'].mean():.4f}")
     print(f"  ROUGE-L (avg): {df['rougeL'].mean():.4f}")
     print(f"  BLEU    (avg): {df['bleu'].mean():.4f}")
+    if retrieve_context_fn is not None:
+        n_used = int(df["rag_used"].sum())
+        pct_used = 100 * n_used / len(df) if len(df) > 0 else 0
+        print(f"  RAG được dùng: {n_used}/{len(df)} câu ({pct_used:.1f}%) đạt ngưỡng tương đồng.")
     print(f"{'=' * 60}")

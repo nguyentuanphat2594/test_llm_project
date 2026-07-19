@@ -1,23 +1,26 @@
 """
-chat.py
--------
-File dùng lúc CHẠY THẬT (inference) - sau khi đã train xong (có output_model/).
+File dùng để CHAT THẬT với model đã train (sau khi có output_model/) --
+người dùng nhập câu hỏi trực tiếp, model trả lời.
 
-Luồng:
-  question -> (nếu USE_RAG=True) rag_bridge.get_context_texts() lấy chunks
-              thật từ vector DB của RAG project
-            -> build_prompt() (từ src/prompt_template.py)
-            -> model đã train (base model + adapter LoRA)
-            -> câu trả lời
+Nếu muốn dùng RAG, chunks liên quan sẽ được retrieve thật từ vector DB
+(qua rag_bridge), tính % tương đồng, và chỉ chunks đủ liên quan mới được
+đưa vào prompt cho model.
 
-ĐÃ SỬA so với bản gốc:
-  - Khi USE_RAG=True (trong src/config.py) -> tự động gọi rag_bridge để lấy
-    chunks THẬT từ vector DB, không dùng demo_chunks giả lập nữa.
-  - Khi USE_RAG=False -> giữ nguyên hành vi cũ (chunks rỗng / demo).
+Điểm khác biệt quan trọng: việc bật/tắt RAG ở đây ĐỘC LẬP với cờ USE_RAG
+dùng cho train/evaluate -- có thể tự chọn riêng cho từng câu hỏi ngay
+trong lúc chat, không cần đổi biến môi trường hay restart.
 
-Cách chạy thử:
-    python -m pipeline.chat
+Cách chạy:
+    python -m pipeline.chat          # vòng lặp hỏi-đáp thật
+    python -m pipeline.chat --demo   # demo nhanh 1 câu cố định
+
+Trong lúc chat, gõ:
+    /rag on   -> bật RAG cho các câu hỏi tiếp theo
+    /rag off  -> tắt RAG (Q&A thuần)
+    exit/quit -> thoát
 """
+
+import sys
 
 import torch
 from transformers import AutoModelForCausalLM, AutoTokenizer
@@ -61,23 +64,48 @@ def load_chat_model():
 
 
 # ============================================================
-# LẤY CONTEXT (chunks liên quan) CHO CÂU HỎI
+# LẤY CONTEXT (chunks liên quan) CHO CÂU HỎI -- CÓ LỌC THEO % TƯƠNG ĐỒNG
 # ============================================================
 
-def get_chunks_for_question(question: str, top_k: int = 3) -> list[str]:
+def get_chunks_for_question(question: str, top_k: int = 3,
+                             similarity_threshold: float = None,
+                             verbose: bool = True,
+                             use_rag: bool = None) -> list[str]:
     """
-    USE_RAG=True  -> gọi rag_bridge để retrieve chunks THẬT từ vector DB.
-    USE_RAG=False -> trả về [] (model trả lời thuần Q&A, không có ngữ cảnh).
+    use_rag: ghi đè cờ USE_RAG toàn cục CHỈ cho lần gọi này -- để chat có
+        thể tự chọn dùng RAG hay không, ĐỘC LẬP với cờ USE_RAG chung dùng
+        cho train/evaluate (không cần đổi biến môi trường/reload gì cả).
+        - None (mặc định) -> dùng theo USE_RAG chung (src.config).
+        - True  -> LUÔN thử RAG cho câu này, bất kể USE_RAG chung là gì.
+        - False -> LUÔN bỏ qua RAG cho câu này, trả lời Q&A thuần.
     """
-    if not USE_RAG:
+    effective_use_rag = USE_RAG if use_rag is None else use_rag
+    if not effective_use_rag:
         return []
 
-    from src.rag_bridge import get_context_texts
+    from src.rag_bridge import get_context_with_similarity
     try:
-        return get_context_texts(question, top_k=top_k)
+        result = get_context_with_similarity(
+            question, top_k=top_k, similarity_threshold=similarity_threshold,
+        )
     except Exception as e:
         print(f"[CẢNH BÁO] Retrieve context thất bại ({e}) -> trả lời không có ngữ cảnh.")
         return []
+
+    if verbose:
+        print(f"\n--- RAG cho câu hỏi này (mode={result['retrieval_mode']}) ---")
+        for i, (raw, pct) in enumerate(zip(result["raw_contexts"], result["similarity_pct"]), 1):
+            pct_str = f"{pct:.1f}%" if pct is not None else "N/A (mode không quy đổi được % tương đồng)"
+            preview = raw[:150].replace("\n", " ")
+            print(f"  [{i}] Tương đồng: {pct_str} | {preview}...")
+
+        if result["rag_used"]:
+            print(f"  -> DÙNG RAG: {len(result['used_contexts'])} context đạt ngưỡng, đưa vào prompt.")
+        else:
+            print("  -> KHÔNG DÙNG RAG: không có context nào đạt ngưỡng tương đồng, trả lời Q&A thuần.")
+        print("-" * 50)
+
+    return result["used_contexts"]
 
 
 # ============================================================
@@ -88,7 +116,7 @@ def generate_answer(model, tokenizer, chunks: list[str], question: str,
                      max_new_tokens: int = MAX_NEW_TOKENS_CHAT) -> str:
     """
     Args:
-        chunks: danh sách đoạn văn bản liên quan (do vector DB trả về)
+        chunks: danh sách đoạn văn bản liên quan (đã lọc, sẵn sàng đưa vào prompt)
         question: câu hỏi của user
 
     Returns:
@@ -125,16 +153,64 @@ def generate_answer(model, tokenizer, chunks: list[str], question: str,
 # HỎI 1 CÂU (dùng cho cả demo và vòng lặp chat thật)
 # ============================================================
 
-def ask(model, tokenizer, question: str, top_k: int = 3) -> str:
-    chunks = get_chunks_for_question(question, top_k=top_k)
+def ask(model, tokenizer, question: str, top_k: int = 3,
+        similarity_threshold: float = None, verbose: bool = True,
+        use_rag: bool = None) -> str:
+    chunks = get_chunks_for_question(
+        question, top_k=top_k,
+        similarity_threshold=similarity_threshold, verbose=verbose,
+        use_rag=use_rag,
+    )
     return generate_answer(model, tokenizer, chunks, question)
 
 
 # ============================================================
-# DEMO CHẠY THỬ
+# VÒNG LẶP HỎI-ĐÁP THẬT (người dùng tự nhập câu hỏi)
 # ============================================================
 
-def main():
+def chat_loop():
+    model, tokenizer = load_chat_model()
+
+    # use_rag=None -> mặc định theo USE_RAG chung (src.config, đồng bộ với
+    # lúc train/evaluate). Người dùng có thể tự đổi bằng lệnh /rag on|off
+    # ngay trong vòng lặp, ĐỘC LẬP với cờ chung, không cần restart/reload.
+    session_use_rag = USE_RAG
+
+    print("\n" + "=" * 50)
+    print(f"CHATBOT SẴN SÀNG (mặc định USE_RAG={session_use_rag})")
+    print("Lệnh: '/rag on' bật RAG | '/rag off' tắt RAG | 'exit'/'quit' thoát")
+    print("=" * 50)
+
+    while True:
+        try:
+            question = input("\nCâu hỏi của bạn: ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nThoát chatbot.")
+            break
+
+        if not question:
+            continue
+        if question.lower() in ("exit", "quit"):
+            print("Thoát chatbot.")
+            break
+        if question.lower() == "/rag on":
+            session_use_rag = True
+            print("[OK] Đã BẬT RAG cho các câu hỏi tiếp theo.")
+            continue
+        if question.lower() == "/rag off":
+            session_use_rag = False
+            print("[OK] Đã TẮT RAG cho các câu hỏi tiếp theo (Q&A thuần).")
+            continue
+
+        answer = ask(model, tokenizer, question, use_rag=session_use_rag)
+        print("\nTRẢ LỜI:", answer)
+
+
+# ============================================================
+# DEMO CHẠY NHANH (1 câu cố định, không cần nhập tay)
+# ============================================================
+
+def demo():
     model, tokenizer = load_chat_model()
 
     demo_question = "Triệu chứng của bệnh bạch cầu cấp ở người lớn là gì?"
@@ -147,8 +223,8 @@ def main():
     if USE_RAG:
         answer = ask(model, tokenizer, demo_question)
     else:
-        # USE_RAG=False -> giữ demo_chunks giả lập như bản gốc để vẫn xem
-        # được ví dụ có context hoạt động ra sao.
+        # USE_RAG=False -> giữ demo_chunks giả lập để vẫn xem được ví dụ
+        # có context hoạt động ra sao.
         demo_chunks = [
             "Signs and symptoms of adult ALL include fever, feeling tired, "
             "and easy bruising or bleeding. Check with your doctor if you have "
@@ -159,6 +235,13 @@ def main():
 
     print("TRẢ LỜI:", answer)
     print("=" * 50)
+
+
+def main():
+    if "--demo" in sys.argv:
+        demo()
+    else:
+        chat_loop()
 
 
 if __name__ == "__main__":
