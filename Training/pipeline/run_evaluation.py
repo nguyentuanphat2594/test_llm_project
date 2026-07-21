@@ -6,6 +6,8 @@ KHÔNG train lại. Dùng khi bạn đã có checkpoint từ trước và chỉ 
   - đổi max_samples (vd: test full thay vì 100 mẫu),
   - hoặc chạy lại evaluation vì lần trước bị ngắt giữa chừng (resume=True),
 mà không muốn tốn thời gian train lại.
+
+ĐÃ SỬA so với bản gốc:
   - Fix bug: `default=len(test_raw)` bị dùng TRƯỚC khi test_raw được load
     (gây NameError). Nay load test_raw trước, argparse dùng sau.
   - Mặc định không truyền gì -> chạy FULL tập test (không phải 100 mẫu).
@@ -96,7 +98,7 @@ def load_raw_test_for_export(path):
 
 def main(max_samples: int = None, resume: bool = False,
          rag_similarity_threshold: float = None,
-         rag_raw_score_threshold: float = None):
+         rag_relative_threshold: float = 0.5):
     """
     Args:
         max_samples: số mẫu test dùng để tính ROUGE/BLEU.
@@ -109,10 +111,10 @@ def main(max_samples: int = None, resume: bool = False,
             CHẤP NHẬN context RAG. CHỈ áp dụng khi RETRIEVAL_MODE của RAG
             project là "cosine". None -> dùng SIMILARITY_THRESHOLD mặc
             định của RAG project.
-        rag_raw_score_threshold: ngưỡng điểm THÔ để chấp nhận context --
-            CHỈ áp dụng khi RETRIEVAL_MODE là "bm25" hoặc "hybrid" (không
-            có % chuẩn, tự chọn số sau khi quan sát điểm thực tế). None
-            (mặc định) -> KHÔNG lọc gì với 2 mode này.
+        rag_relative_threshold: ngưỡng % TƯƠNG ĐỐI (0..1, mặc định 0.5) --
+            CHỈ áp dụng khi RETRIEVAL_MODE là "bm25" hoặc "hybrid". Tự
+            động so điểm mỗi context với điểm CAO NHẤT trong top-k của
+            CHÍNH câu hỏi đó -- không cần tự đoán ngưỡng tuyệt đối.
     """
     print("Đang tải tập test (thô)...")
     test_raw = load_raw_test_for_export(TEST_FILE)
@@ -160,7 +162,7 @@ def main(max_samples: int = None, resume: bool = False,
         resume=resume,
         retrieve_context_fn=retrieve_context_fn,
         rag_similarity_threshold=rag_similarity_threshold,
-        rag_raw_score_threshold=rag_raw_score_threshold,
+        rag_relative_threshold=rag_relative_threshold,
     )
     print(f"Đã lưu CSV dự đoán -> {PREDICTIONS_CSV}")
 
