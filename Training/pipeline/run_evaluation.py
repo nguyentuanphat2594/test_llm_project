@@ -1,20 +1,28 @@
 """
-Chạy RIÊNG bước inference + ROUGE/BLEU trên model ĐÃ TRAIN SẴN, KHÔNG
-train lại. Dùng khi đã có checkpoint và chỉ muốn:
-- Đổi max_samples (test full thay vì demo 100 mẫu).
-- Chạy lại vì lần trước bị ngắt giữa chừng (resume=True).
-- Bật/tắt RAG (USE_RAG trong src/config.py) mà không cần train lại model.
+run_evaluation.py
+------------------
+Chạy RIÊNG bước ROUGE/BLEU trên model ĐÃ TRAIN SẴN (output/output_model),
+KHÔNG train lại. Dùng khi bạn đã có checkpoint từ trước và chỉ muốn:
+  - đổi max_samples (vd: test full thay vì 100 mẫu),
+  - hoặc chạy lại evaluation vì lần trước bị ngắt giữa chừng (resume=True),
+mà không muốn tốn thời gian train lại.
+  - Fix bug: `default=len(test_raw)` bị dùng TRƯỚC khi test_raw được load
+    (gây NameError). Nay load test_raw trước, argparse dùng sau.
+  - Mặc định không truyền gì -> chạy FULL tập test (không phải 100 mẫu).
+  - Thêm tham số resume (mặc định False) truyền thẳng xuống
+    save_predictions_csv() -- xem docstring ở đó để biết khi nào an toàn
+    để bật resume=True.
 
-Tự động đọc tập test (test.jsonl), load model + adapter LoRA, và nếu
-USE_RAG=True sẽ tự nối rag_bridge để retrieve context thật cho từng câu
-hỏi trước khi generate. Kết quả lưu vào evaluation_results.csv (đường dẫn
-theo PREDICTIONS_CSV trong config), sẵn sàng cho bước LLM Judge sau đó.
+Cách chạy:
+    python -m pipeline.run_evaluation                    # full tập test
+    python -m pipeline.run_evaluation --max_samples 500  # 500 mẫu
 
-Cách gọi từ notebook:
-    run_evaluation.main()                              # full tập test
-    run_evaluation.main(max_samples=500)                # 500 mẫu
-    run_evaluation.main(resume=True)                    # nối tiếp CSV cũ
-    run_evaluation.main(rag_similarity_threshold=0.70)   # đổi ngưỡng RAG
+Cách gọi từ notebook (Kaggle/Colab):
+    from pipeline import run_evaluation
+    run_evaluation.main()                                # full, ghi đè
+    run_evaluation.main(max_samples=500)                 # 500 mẫu, ghi đè
+    run_evaluation.main(resume=True)                     # full, nối tiếp CSV cũ
+    run_evaluation.main(max_samples=1000, resume=True)    # 1000 mẫu, nối tiếp
 """
 
 import argparse
@@ -86,7 +94,9 @@ def load_raw_test_for_export(path):
     return Dataset.from_list(raw_samples) if raw_samples else None
 
 
-def main(max_samples: int = None, resume: bool = False, rag_similarity_threshold: float = None):
+def main(max_samples: int = None, resume: bool = False,
+         rag_similarity_threshold: float = None,
+         rag_raw_score_threshold: float = None):
     """
     Args:
         max_samples: số mẫu test dùng để tính ROUGE/BLEU.
@@ -96,9 +106,13 @@ def main(max_samples: int = None, resume: bool = False, rag_similarity_threshold
             câu đã có sẵn prediction, chỉ generate tiếp phần còn thiếu.
             CHỈ bật khi chắc chắn CSV cũ là của ĐÚNG model hiện tại.
         rag_similarity_threshold: ngưỡng % tương đồng (0..1, vd 0.70) để
-            CHẤP NHẬN context RAG. None -> dùng SIMILARITY_THRESHOLD mặc
-            định của RAG project. Chỉ áp dụng đúng ý nghĩa khi
-            RETRIEVAL_MODE của RAG project là "cosine" (xem rag_bridge.py).
+            CHẤP NHẬN context RAG. CHỈ áp dụng khi RETRIEVAL_MODE của RAG
+            project là "cosine". None -> dùng SIMILARITY_THRESHOLD mặc
+            định của RAG project.
+        rag_raw_score_threshold: ngưỡng điểm THÔ để chấp nhận context --
+            CHỈ áp dụng khi RETRIEVAL_MODE là "bm25" hoặc "hybrid" (không
+            có % chuẩn, tự chọn số sau khi quan sát điểm thực tế). None
+            (mặc định) -> KHÔNG lọc gì với 2 mode này.
     """
     print("Đang tải tập test (thô)...")
     test_raw = load_raw_test_for_export(TEST_FILE)
@@ -146,6 +160,7 @@ def main(max_samples: int = None, resume: bool = False, rag_similarity_threshold
         resume=resume,
         retrieve_context_fn=retrieve_context_fn,
         rag_similarity_threshold=rag_similarity_threshold,
+        rag_raw_score_threshold=rag_raw_score_threshold,
     )
     print(f"Đã lưu CSV dự đoán -> {PREDICTIONS_CSV}")
 

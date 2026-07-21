@@ -1,23 +1,13 @@
 """
-File dùng để CHAT THẬT với model đã train (sau khi có output_model/) --
-người dùng nhập câu hỏi trực tiếp, model trả lời.
+chat.py
+-------
+File dùng lúc CHẠY THẬT (inference) - sau khi đã train xong (có output_model/).
 
-Nếu muốn dùng RAG, chunks liên quan sẽ được retrieve thật từ vector DB
-(qua rag_bridge), tính % tương đồng, và chỉ chunks đủ liên quan mới được
-đưa vào prompt cho model.
+Cách chạy (vòng lặp hỏi-đáp thật):
+    python -m pipeline.chat
 
-Điểm khác biệt quan trọng: việc bật/tắt RAG ở đây ĐỘC LẬP với cờ USE_RAG
-dùng cho train/evaluate -- có thể tự chọn riêng cho từng câu hỏi ngay
-trong lúc chat, không cần đổi biến môi trường hay restart.
-
-Cách chạy:
-    python -m pipeline.chat          # vòng lặp hỏi-đáp thật
-    python -m pipeline.chat --demo   # demo nhanh 1 câu cố định
-
-Trong lúc chat, gõ:
-    /rag on   -> bật RAG cho các câu hỏi tiếp theo
-    /rag off  -> tắt RAG (Q&A thuần)
-    exit/quit -> thoát
+Cách chạy demo nhanh (1 câu, không cần nhập tay):
+    python -m pipeline.chat --demo
 """
 
 import sys
@@ -69,6 +59,7 @@ def load_chat_model():
 
 def get_chunks_for_question(question: str, top_k: int = 3,
                              similarity_threshold: float = None,
+                             raw_score_threshold: float = None,
                              verbose: bool = True,
                              use_rag: bool = None) -> list[str]:
     """
@@ -78,6 +69,11 @@ def get_chunks_for_question(question: str, top_k: int = 3,
         - None (mặc định) -> dùng theo USE_RAG chung (src.config).
         - True  -> LUÔN thử RAG cho câu này, bất kể USE_RAG chung là gì.
         - False -> LUÔN bỏ qua RAG cho câu này, trả lời Q&A thuần.
+    similarity_threshold: ngưỡng % (0..1) -- chỉ dùng khi RETRIEVAL_MODE
+        của RAG project là "cosine".
+    raw_score_threshold: ngưỡng điểm thô -- chỉ dùng khi RETRIEVAL_MODE
+        là "bm25" hoặc "hybrid" (không có % chuẩn, tự chọn số sau khi
+        quan sát điểm thực tế).
     """
     effective_use_rag = USE_RAG if use_rag is None else use_rag
     if not effective_use_rag:
@@ -87,6 +83,7 @@ def get_chunks_for_question(question: str, top_k: int = 3,
     try:
         result = get_context_with_similarity(
             question, top_k=top_k, similarity_threshold=similarity_threshold,
+            raw_score_threshold=raw_score_threshold,
         )
     except Exception as e:
         print(f"[CẢNH BÁO] Retrieve context thất bại ({e}) -> trả lời không có ngữ cảnh.")
@@ -154,11 +151,12 @@ def generate_answer(model, tokenizer, chunks: list[str], question: str,
 # ============================================================
 
 def ask(model, tokenizer, question: str, top_k: int = 3,
-        similarity_threshold: float = None, verbose: bool = True,
-        use_rag: bool = None) -> str:
+        similarity_threshold: float = None, raw_score_threshold: float = None,
+        verbose: bool = True, use_rag: bool = None) -> str:
     chunks = get_chunks_for_question(
         question, top_k=top_k,
-        similarity_threshold=similarity_threshold, verbose=verbose,
+        similarity_threshold=similarity_threshold,
+        raw_score_threshold=raw_score_threshold, verbose=verbose,
         use_rag=use_rag,
     )
     return generate_answer(model, tokenizer, chunks, question)
